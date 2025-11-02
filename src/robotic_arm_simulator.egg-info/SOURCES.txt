@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+src/arm_sim/__init__.py
+src/arm_sim/cli.py
+src/robotic_arm_simulator.egg-info/PKG-INFO
+src/robotic_arm_simulator.egg-info/SOURCES.txt
+src/robotic_arm_simulator.egg-info/dependency_links.txt
+src/robotic_arm_simulator.egg-info/requires.txt
+src/robotic_arm_simulator.egg-info/top_level.txt

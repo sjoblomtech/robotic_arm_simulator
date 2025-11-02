@@ -1,0 +1,12 @@
+# vitral env
+.venv/
+# Python cache
+__pycache__/
+*.pyc
+# IDE
+.vscode/
+# outputs
+*.mp4
+*.gif
+*.png
+*.csv
