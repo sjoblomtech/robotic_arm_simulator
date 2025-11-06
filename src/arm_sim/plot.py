@@ -6,8 +6,10 @@ def plot_arm(joint_positions, title = "Arm Pose"):
 
     plt.figure()
     plt.plot(xs, ys, "-o", color = "blue", linewidth = 2, markersize = 6)
+
+    # Mark base and end effector
     plt.scatter(xs[0], ys[0], color = "green", s = 80, label = "Base")
-    plt.scatter(xs[-1], ys[-1], color = "red", s = 80, label = "End Effektor")
+    plt.scatter(xs[-1], ys[-1], color = "red", s = 80, label = "End Effekcor")
 
     plt.axis("equal")
     plt.grid(True, linestyle = "--", alpha = 0.6)
