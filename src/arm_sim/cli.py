@@ -1,62 +1,102 @@
 import argparse
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional
 from arm_sim.planner import interpolate_joint_space
 from arm_sim.visualize import animate_joint_trajectory
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="2D robotic arm simulator")
+# Helpers
+def load_scenario(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"Scenario file not found: {path}")
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Scenario json must be an object with keys")
+    return data
 
-    parser.add_argument("--links", nargs="+", type=float, required=True,
-                        help="List of link lengths")
-    
-    parser.add_argument("--start", nargs="+", type=float, required=True,
-                        help="Start joint angles in degrees")
-    
-    parser.add_argument("--end", nargs="+", type=float, required=True,
-                        help="End joint angles in degrees")
-    
-    parser.add_argument("--duration", type=float, default=3.0,
+def coalesce(*values):
+    # Return first value that is not None
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+def build_parser():
+    p = argparse.ArgumentParser(description="2D robotic arm simulator")
+    # Primary inputs
+    p.add_argument("--links", nargs="+", type=float, help="List of link lengths")
+    p.add_argument("--start", nargs="+", type=float, help="Start joint angles in degrees")
+    p.add_argument("--end", nargs="+", type=float, help="End joint angles in degrees")
+    # Timing / motion
+    p.add_argument("--duration", type=float, default=3.0,
                         help="Animation duration in seconds")
-    
-    parser.add_argument("--fps", type=int, default=30,
+    p.add_argument("--fps", type=int, default=30,
                         help="Frames per second")
-    
-    parser.add_argument("--easing", choices=["linear", "cosine", "smoothstep"],
+    p.add_argument("--easing", choices=["linear", "cosine", "smoothstep"],
                         default="linear")
-    
-    parser.add_argument("--trail", action="store_true",
+    # Viz
+    p.add_argument("--trail", action="store_true",
                         help="Show end-effector trail")
-    
-    parser.add_argument("--save", type=str, default=None,
+    p.add_argument("--save", type=str, default=None,
                         help="Outcome filename (mp4/gif). If omitted, show interactively.")
-    
-    return parser
+    # Scenario file
+    p.add_argument("--scenario", type=str, help="Path to scenario json (CLI flags override it)")
+    # Convenience demo if nothing is provided
+    p.add_argument("--demo", action="store_true", help="Run a built-in demo if no scenarios/flags are provided")
+    return p
 
 def main():
-    parser = build_parser()
-    args = parser.parse_args()
+    args = build_parser().parse_args()
+
+    # Load scenario
+    if args.scenario:
+        scenario = load_scenario(Path(args.scenario))
+
+    # Merge: CLI flags override scenario values; then fall back to demo if requested/needed
+    links = coalesce(args.links,    scenario.get("links"))
+    start = coalesce(args.start,   scenario.get("start"))
+    end = coalesce(args.end,  scenario.get("end"))
+    duration = coalesce(args.duration,  scenario.get("duration"), 3.0)
+    fps = coalesce(args.fps,    scenario.get("fps"), 30)
+    easing = coalesce(args.easing,  scenario.get("easing"), "linear")
+    # Trail: CLI --trail overrides scenario (bool flags default to False if not present)
+    trail = args.trail or bool(scenario.get("trail", False))
+    save = coalesce(args.save,  scenario.get("save"))
+
+    # Build in demo if nothing was provided and --demo is set
+    if args.demo and (links is None or start is None or end is None):
+        links = links or [7.0, 10.0]
+        start = start or [35.0, 20.0]
+        end = end or [10.0, 60.0]
+        duration = duration or 3.0
+        fps = fps or 30
+        easing = easing or "cosine"
+        # Trail/save remain as chosen
 
     # Validation
-    if len(args.links) != len(args.start):
-        raise ValueError("Links and start angles must match in count")
-    if len(args.links) != len(args.end):
-        raise ValueError("Links and end angles must match in count")
+    if links is None or start is None or end is None:
+        raise ValueError("Missing inputs. Provide --scenario or flags: --links, "
+        "--start, --end, (and optionally --duration, --fps, --easing, --trail, --save).")
+    if len(links) != len(start) or len(links) != len(end):
+        raise ValueError("Links, start and end must have the same length")
     
     # Motion planner
     frames = interpolate_joint_space(
-        start_deg = args.start,
-        end_deg = args.end,
-        duration_s = args.duration,
-        fps = args.fps,
-        easing = args.easing,
+        start,
+        end,
+        duration,
+        fps,
+        easing,
     )
 
     # Animate
     animate_joint_trajectory(
-        link_lengths = args.links,
-        angle_frames = frames,
-        fps = args.fps,
-        trail = args.trail,
-        save = args.save,
+        links,
+        frames,
+        fps,
+        trail,
+        save,
     )
 
 if __name__ == "__main__":

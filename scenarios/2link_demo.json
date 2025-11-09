@@ -1,7 +1,10 @@
 {
     "links": [7.0, 10.0],
-    "start_angle_deg": [35.0, 20.0],
-    "end_angles_deg": [10.0, 60.0],
-    "duration_s": 3.0,
-    "fps": 30
+    "start": [35.0, 20.0],
+    "end": [10.0, 60.0],
+    "duration": 3.0,
+    "fps": 30,
+    "easing": "cosine",
+    "trail": true,
+    "save": null
 }
