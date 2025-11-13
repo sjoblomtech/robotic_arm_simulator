@@ -10,7 +10,7 @@ Planar robotic arm simulation with matplotlib animation.
 # Create a vitrual environment (recommended):
 ```bash
 python3 -m venv .venv
-source .venv/bin/active
+source .venv/bin/activate
 
 # Install depenencies:
 python -m pip install -r requirements.txt

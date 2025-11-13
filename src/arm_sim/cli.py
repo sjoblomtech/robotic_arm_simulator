@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from arm_sim.planner import interpolate_joint_space
 from arm_sim.visualize import animate_joint_trajectory
+from arm_sim.ik import ik_2link, clamp_target_to_workspace
 
 # Helpers
 def load_scenario(path: Path) -> Dict[str, Any]:
@@ -28,6 +29,11 @@ def build_parser():
     p.add_argument("--links", nargs="+", type=float, help="List of link lengths")
     p.add_argument("--start", nargs="+", type=float, help="Start joint angles in degrees")
     p.add_argument("--end", nargs="+", type=float, help="End joint angles in degrees")
+    # IK inputs (for 2-link arm)
+    p.add_argument("--target", nargs=2, type=float, help="Cartesian target (x, y) for IK (2-link only)")
+    p.add_argument("--prefer", choices=["elbow_up", "elbow_down"], default="elbow_up",
+                   help="IK branch preferences")
+    p.add_argument("--clamp", action="store_true", help="Clamp target to reachable workspace for IK")
     # Timing / motion
     p.add_argument("--duration", type=float, default=3.0,
                         help="Animation duration in seconds")
@@ -50,6 +56,7 @@ def main():
     args = build_parser().parse_args()
 
     # Load scenario
+    scenario: Dict[str, Any] = {}
     if args.scenario:
         scenario = load_scenario(Path(args.scenario))
 
@@ -57,6 +64,9 @@ def main():
     links = coalesce(args.links,    scenario.get("links"))
     start = coalesce(args.start,   scenario.get("start"))
     end = coalesce(args.end,  scenario.get("end"))
+    target = coalesce(args.target,  scenario.get("target"))
+    prefer = coalesce(args.prefer,  scenario.get("prefer"), "elbow_up")
+    clamp = args.clamp or bool(scenario.get("clamp", False))
     duration = coalesce(args.duration,  scenario.get("duration"), 3.0)
     fps = coalesce(args.fps,    scenario.get("fps"), 30)
     easing = coalesce(args.easing,  scenario.get("easing"), "linear")
@@ -74,6 +84,28 @@ def main():
         easing = easing or "cosine"
         # Trail/save remain as chosen
 
+    # IK mode (if target is given)
+    if target is not None:
+        if links is None:
+            raise ValueError("IK mode requires --links ( 2 lengths).")
+        if len(links) != 2:
+            raise ValueError("IK mode (--target) currently supports exactly 2 links.")
+        
+        x, y =float(target[0]), float(target[1])
+
+        if clamp:
+            x, y, was_clamped = clamp_target_to_workspace(x, y, links[0], links[1])
+            if was_clamped:
+                print(f"[info] Target clamped to reachable workspace: ({x:.3f}, {y:.3f})")
+
+        # Compute IK solution for end pose (degrees)
+        th1_deg, th2_deg = ik_2link(x, y, links[0], links[1], prefer=prefer)
+        end = [th1_deg, th2_deg]
+
+        # Default start if not provided
+        if start is None:
+            start = [0.0, 0.0]
+            
     # Validation
     if links is None or start is None or end is None:
         raise ValueError("Missing inputs. Provide --scenario or flags: --links, "

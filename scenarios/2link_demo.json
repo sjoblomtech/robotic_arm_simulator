@@ -1,7 +1,8 @@
 {
     "links": [7.0, 10.0],
-    "start": [35.0, 20.0],
-    "end": [10.0, 60.0],
+    "target": [11.47, 12.21],
+    "prefer": "elbow_up",
+    "clamp": true,
     "duration": 3.0,
     "fps": 30,
     "easing": "cosine",
