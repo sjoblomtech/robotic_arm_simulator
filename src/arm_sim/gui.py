@@ -12,6 +12,9 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QGroupBox,
     QGridLayout,
+    QDoubleSpinBox,
+    QCheckBox,
+    QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -20,6 +23,7 @@ from matplotlib.figure import Figure
 
 from arm_sim.fk import forward_kinematics
 from arm_sim.planner import interpolate_joint_space
+from arm_sim.ik import ik_2link, clamp_target_to_workspace
 
 class ArmSimWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -103,6 +107,45 @@ class ArmSimWindow(QMainWindow):
             end_grid.addWidget(sld, i, 1)
 
         controls_layout.addWidget(end_group)
+
+        # IK target controls (for 2-link arm)
+        ik_group = QGroupBox("IK target (set END pose)")
+        ik_grid = QGridLayout()
+        ik_group.setLayout(ik_grid)
+
+        # Target X
+        ik_grid.addWidget(QLabel("Target X:"), 0, 0)
+        self.target_x_spin = QDoubleSpinBox()
+        self.target_x_spin.setRange(-50.0, 50.0)
+        self.target_x_spin.setSingleStep(0.1)
+        self.target_x_spin.setValue(10.0)
+        ik_grid.addWidget(self.target_x_spin, 0, 1)
+
+        # Target Y
+        ik_grid.addWidget(QLabel("Target Y"), 1, 0)
+        self.target_y_spin = QDoubleSpinBox()
+        self.target_y_spin.setRange(-50.0, 50.0)
+        self.target_y_spin.setSingleStep(0.1)
+        self.target_y_spin.setValue(10.0)
+        ik_grid.addWidget(self.target_y_spin, 1, 1)
+
+        # Elbow preference
+        ik_grid.addWidget(QLabel("Elbow"), 2, 0)
+        self.prefer_combo = QComboBox()
+        self.prefer_combo.addItems(["elbow_up", "elbow_down"])
+        ik_grid.addWidget(self.prefer_combo, 2, 1)
+
+        # Clamp checkbox
+        self.clamp_checkbox = QCheckBox("Clamp to wokrspace")
+        self.clamp_checkbox.setChecked(True)
+        ik_grid.addWidget(self.clamp_checkbox, 3, 0, 1, 2)
+
+        # Solve IK button
+        self.solve_ik_button = QPushButton("Solve IK -> End pose")
+        self.solve_ik_button.clicked.connect(self.on_solve_ik_clicked)
+        ik_grid.addWidget(self.solve_ik_button, 4, 0, 1, 2)
+
+        controls_layout.addWidget(ik_group)
 
         # Duration slider
         duration_group = QGroupBox("Animation duration (seconds)")
@@ -216,6 +259,55 @@ class ArmSimWindow(QMainWindow):
 
         self.ax.plot(xs, ys, "-o", color="blue", markersize=8)
         self.canvas.draw_idle()
+
+    def on_solve_ik_clicked(self):
+        # Use OL to compute end pose angles from a Cartesian target.
+        if len(self.link_lengths) != 2:
+            print("[IK] Currently only supports exactly 2 links.")
+            return
+         
+        L1, L2 = self.link_lengths
+        x = float(self.target_x_spin.value())
+        y = float(self.target_y_spin.value())
+        prefer = self.prefer_combo.currentText()
+        clamp = self.clamp_checkbox.isChecked()
+
+        # Clamp target if requested
+        if clamp:
+            x_clamped, y_clamped, was_clamped = clamp_target_to_workspace(x, y, L1, L2)
+            if was_clamped:
+                print(f"[IK] Target clamped from ({x:.2f}, {y:.2f}) "
+                    f"to ({x_clamped:.2f}, {y_clamped:.2f})")
+                # Update spin boxes to show clamped values
+                self.target_x_spin.blockSignals(True)
+                self.target_y_spin.blockSignals(True)
+                self.target_x_spin.setValue(x_clamped)
+                self.target_y_spin.setValue(y_clamped)
+                self.target_x_spin.blockSignals(False)
+                self.target_y_spin.blockSignals(False)
+            x, y = x_clamped, y_clamped
+
+        # Compute IK
+        try:
+            th1_deg, th2_deg = ik_2link(x, y, L1, L2, prefer=prefer)
+        except ValueError as e:
+            print(f"[IK] Error: {e}")
+            return
+        
+        # Update end sliders
+        self.end_sliders[0].blockSignals(True)
+        self.end_sliders[1].blockSignals(True)
+        self.end_sliders[0].setValue(int(round(th1_deg)))
+        self.end_sliders[1].setValue(int(round(th2_deg)))
+        self.end_sliders[0].blockSignals(False)
+        self.end_sliders[1].blockSignals(False)
+
+        # Update labels
+        self.end_labels[0].setText(f"Joint 1 end: {th1_deg:.1f}°")
+        self.end_labels[1].setText(f"Joint 2 end: {th2_deg:.1f}°")
+
+        # Preview IK result
+        self._draw_pose([th1_deg, th2_deg])
 
 def main():
     app = QApplication(sys.argv)
