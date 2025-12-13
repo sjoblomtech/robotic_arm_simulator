@@ -60,10 +60,21 @@ class ArmSimWindow(QMainWindow):
         controls.setLayout(controls_layout)
         root_layout.addWidget(controls, stretch=1)
 
+        # Mode selector
+        self.mode_label = QLabel("Mode:")
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["FK (joint angles)", "IK (target x,y)"])
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.mode_label)
+        mode_row.addWidget(self.mode_combo)
+
+        controls_layout.addLayout(mode_row)
+
         # Start pose slider
-        start_group = QGroupBox("Start pose (FK)")
+        self.start_group = QGroupBox("Start pose (FK)")
         start_grid = QGridLayout()
-        start_group.setLayout(start_grid)
 
         self.start_labels: list[QLabel] = []
         self.start_sliders: list[QSlider] = []
@@ -82,12 +93,12 @@ class ArmSimWindow(QMainWindow):
             start_grid.addWidget(lbl, i, 0)
             start_grid.addWidget(sld, i, 1)
 
-        controls_layout.addWidget(start_group)
+        controls_layout.addWidget(self.start_group)
 
         # End pose sliders
-        end_group = QGroupBox("End pose (FK)")
+        self.end_group = QGroupBox("End pose (FK)")
         end_grid = QGridLayout()
-        end_group.setLayout(end_grid)
+        self.end_group.setLayout(end_grid)
 
         self.end_labels: list[QLabel] = []
         self.end_sliders: list[QSlider] = []
@@ -106,12 +117,12 @@ class ArmSimWindow(QMainWindow):
             end_grid.addWidget(lbl, i, 0)
             end_grid.addWidget(sld, i, 1)
 
-        controls_layout.addWidget(end_group)
+        controls_layout.addWidget(self.end_group)
 
         # IK target controls (for 2-link arm)
-        ik_group = QGroupBox("IK target (set END pose)")
+        self.ik_group = QGroupBox("IK target (set END pose)")
         ik_grid = QGridLayout()
-        ik_group.setLayout(ik_grid)
+        self.ik_group.setLayout(ik_grid)
 
         # Target X
         ik_grid.addWidget(QLabel("Target X:"), 0, 0)
@@ -145,7 +156,9 @@ class ArmSimWindow(QMainWindow):
         self.solve_ik_button.clicked.connect(self.on_solve_ik_clicked)
         ik_grid.addWidget(self.solve_ik_button, 4, 0, 1, 2)
 
-        controls_layout.addWidget(ik_group)
+        controls_layout.addWidget(self.ik_group)
+
+        self.on_mode_changed(self.mode_combo.currentIndex())
 
         # Duration slider
         duration_group = QGroupBox("Animation duration (seconds)")
@@ -217,8 +230,36 @@ class ArmSimWindow(QMainWindow):
     def on_play_clicked(self):
         # Compute a joint-spae trajectory and start animating.
         start = self._get_start_angles()
-        end = self._get_end_angles()
         duration = self._get_duration()
+
+        fk_mode = (self.mode_combo.currentIndex() == 0)
+
+        if fk_mode:
+            end = self._get_end_angles()
+        else:
+            # IK mode: compute end angles from target x, y
+            if len(self.link_lengths) != 2:
+                raise ValueError("IK mode currently supports exctly 2 links")
+            
+            L1, L2 = self.link_lengths
+            x = float(self.target_x_spin.value())
+            y = float(self.target_y_spin.value())
+            prefer = self.prefer_combo.currentText()
+            clamp = self.clamp_checkbox.isChecked()
+
+            if clamp:
+                x, y, was_clamped = clamp_target_to_workspace(x, y, L1, L2)
+                if was_clamped:
+                    # Uppdate GUI to show clamped target
+                    self.target_x_spin.blockSignals(True)
+                    self.target_y_spin.blockSignals(True)
+                    self.target_x_spin.setValue(x)
+                    self.target_y_spin.setValue(y)
+                    self.target_x_spin.blockSignals(False)
+                    self.target_y_spin.blockSignals(False)
+
+            th1_deg, th2_deg = ik_2link(x, y, L1, L2, prefer=prefer)
+            end = [th1_deg, th2_deg]
 
         # Build frames
         self.frames = interpolate_joint_space(
@@ -308,6 +349,22 @@ class ArmSimWindow(QMainWindow):
 
         # Preview IK result
         self._draw_pose([th1_deg, th2_deg])
+
+    def on_mode_changed(self, idx: int):
+        """
+        FK mode: show end sliders, hide IK target box
+        IK mode: show IK target box, hide end sliders (or disable them)
+        """
+        fk_mode = (idx == 0)
+
+        self.end_group.setVisible(fk_mode)
+        self.ik_group.setVisible(not fk_mode)
+
+        # Update preview when switching modes
+        if fk_mode:
+            self._draw_pose(self._get_end_angles())
+        else:
+            self._draw_pose(self._get_start_angles())
 
 def main():
     app = QApplication(sys.argv)
