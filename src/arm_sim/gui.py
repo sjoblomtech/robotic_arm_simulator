@@ -28,7 +28,9 @@ from arm_sim.ik import ik_2link, clamp_target_to_workspace
 class ArmSimWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Robotic Arm Simulator (PyQt + Matplotlib, FK mode)")
+        self.base_title = "Robotic Arm Simulator"
+        self.setWindowTitle(self.base_title)
+        self.fk_mode = True
 
         # Model parameters
         self.link_lengths: List[float] = [7.0, 10.0]
@@ -54,6 +56,12 @@ class ArmSimWindow(QMainWindow):
         self._setup_axes()
         root_layout.addWidget(self.canvas, stretch=2)
 
+        # Track last clicked target (for drawing a marker)
+        self.last_target = None # type: tuple[float, float] | None
+
+        # Matplotlib click event
+        self.canvas.mpl_connect("button_press_event", self.on_plot_click)
+
         # Control panel
         controls = QWidget()
         controls_layout = QVBoxLayout()
@@ -73,8 +81,9 @@ class ArmSimWindow(QMainWindow):
         controls_layout.addLayout(mode_row)
 
         # Start pose slider
-        self.start_group = QGroupBox("Start pose (FK)")
+        self.start_group = QGroupBox("Start pose (joint angles)")
         start_grid = QGridLayout()
+        self.start_group.setLayout(start_grid)
 
         self.start_labels: list[QLabel] = []
         self.start_sliders: list[QSlider] = []
@@ -96,7 +105,7 @@ class ArmSimWindow(QMainWindow):
         controls_layout.addWidget(self.start_group)
 
         # End pose sliders
-        self.end_group = QGroupBox("End pose (FK)")
+        self.end_group = QGroupBox("End pose (joint angles)")
         end_grid = QGridLayout()
         self.end_group.setLayout(end_grid)
 
@@ -191,14 +200,20 @@ class ArmSimWindow(QMainWindow):
     def _setup_axes(self):
         self.ax.clear()
         self.ax.set_aspect("equal", adjustable="box")
+
         max_reach = sum(self.link_lengths) if self.link_lengths else 1.0
         pad = max_reach * 1.1
         self.ax.set_xlim(-pad, pad)
         self.ax.set_ylim(-pad, pad)
+
         self.ax.grid(True, linestyle="--", alpha=0.5)
         self.ax.set_xlabel("X")
         self.ax.set_ylabel("Y")
-        self.ax.set_title("Planar 2-link arm (FK)")
+
+        if self.fk_mode:
+            self.ax.set_title("Planar 2-link Arm - Forward Kinematics")
+        else:
+            self.ax.set_title("Planar 2-link Arm - Inverse Kinematics")
 
     def _get_start_angles(self) -> list[float]:
         return [float(s.value()) for s in self.start_sliders]
@@ -299,72 +314,96 @@ class ArmSimWindow(QMainWindow):
         ys = [p[1] for p in pts]
 
         self.ax.plot(xs, ys, "-o", color="blue", markersize=8)
+        
+        if self.last_target is not None:
+            tx, ty = self.last_target
+            self.ax.plot([tx], [ty], marker="x", markersize=10, linestyle="None")
+
         self.canvas.draw_idle()
 
     def on_solve_ik_clicked(self):
-        # Use OL to compute end pose angles from a Cartesian target.
-        if len(self.link_lengths) != 2:
-            print("[IK] Currently only supports exactly 2 links.")
-            return
-         
-        L1, L2 = self.link_lengths
-        x = float(self.target_x_spin.value())
-        y = float(self.target_y_spin.value())
-        prefer = self.prefer_combo.currentText()
-        clamp = self.clamp_checkbox.isChecked()
-
-        # Clamp target if requested
-        if clamp:
-            x_clamped, y_clamped, was_clamped = clamp_target_to_workspace(x, y, L1, L2)
-            if was_clamped:
-                print(f"[IK] Target clamped from ({x:.2f}, {y:.2f}) "
-                    f"to ({x_clamped:.2f}, {y_clamped:.2f})")
-                # Update spin boxes to show clamped values
-                self.target_x_spin.blockSignals(True)
-                self.target_y_spin.blockSignals(True)
-                self.target_x_spin.setValue(x_clamped)
-                self.target_y_spin.setValue(y_clamped)
-                self.target_x_spin.blockSignals(False)
-                self.target_y_spin.blockSignals(False)
-            x, y = x_clamped, y_clamped
-
-        # Compute IK
-        try:
-            th1_deg, th2_deg = ik_2link(x, y, L1, L2, prefer=prefer)
-        except ValueError as e:
-            print(f"[IK] Error: {e}")
-            return
-        
-        # Update end sliders
-        self.end_sliders[0].blockSignals(True)
-        self.end_sliders[1].blockSignals(True)
-        self.end_sliders[0].setValue(int(round(th1_deg)))
-        self.end_sliders[1].setValue(int(round(th2_deg)))
-        self.end_sliders[0].blockSignals(False)
-        self.end_sliders[1].blockSignals(False)
-
-        # Update labels
-        self.end_labels[0].setText(f"Joint 1 end: {th1_deg:.1f}°")
-        self.end_labels[1].setText(f"Joint 2 end: {th2_deg:.1f}°")
-
-        # Preview IK result
-        self._draw_pose([th1_deg, th2_deg])
+        self.preview_ik_solution()
 
     def on_mode_changed(self, idx: int):
         """
         FK mode: show end sliders, hide IK target box
         IK mode: show IK target box, hide end sliders (or disable them)
         """
-        fk_mode = (idx == 0)
+        self.fk_mode = (idx == 0)
 
-        self.end_group.setVisible(fk_mode)
-        self.ik_group.setVisible(not fk_mode)
+        self.start_group.setVisible(True)
+        self.end_group.setVisible(self.fk_mode)
+        self.ik_group.setVisible(not self.fk_mode)
 
-        # Update preview when switching modes
-        if fk_mode:
+        # Update when switching modes
+        if self.fk_mode:
             self._draw_pose(self._get_end_angles())
+            self.setWindowTitle(f"{self.base_title} - Forward Kinematics")
         else:
             self._draw_pose(self._get_start_angles())
+            self.setWindowTitle(f"{self.base_title} - Inverse Kinematics")
+
+    def on_plot_click(self, event):
+        # In IK mode: click on the plot to set (x, y) target and preview IK pose.
+        # Only react to IK mode
+        ik_mode = (self.mode_combo.currentIndex() == 1)
+        if not ik_mode:
+            return
+        
+        # Must click inside the axes
+        if event.inaxes != self.ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        
+        x = float(event.xdata)
+        y = float(event.ydata)
+
+        # Store for marker drawing
+        self.last_target = (x, y)
+
+        # Update spin boxes to match click
+        self.target_x_spin.setValue(x)
+        self.target_y_spin.setValue(y)
+
+        # Solve IK and preview pose
+        self.preview_ik_solution()
+
+    def preview_ik_solution(self):
+        # Solve IK from current target Widgets and preview the resulting arm pose.
+        if len(self.link_lengths) != 2:
+            return
+        
+        L1, L2 = self.link_lengths
+        x = float(self.target_x_spin.value())
+        y = float(self.target_y_spin.value())
+        prefer = self.prefer_combo.currentText()
+        clamp = self.clamp_checkbox.isChecked()
+
+        if clamp:
+            x2, y2, was_clamped = clamp_target_to_workspace(x, y, L1, L2)
+            if was_clamped:
+                self.target_x_spin.blockSignals(True)
+                self.target_y_spin.blockSignals(True)
+                self.target_x_spin.setValue(x2)
+                self.target_y_spin.setValue(y2)
+                self.target_x_spin.blockSignals(False)
+                self.target_y_spin.blockSignals(False)
+
+                self.last_target = (x2, y2)
+            x, y = x2, y2
+
+        try:
+            th1_deg, th2_deg = ik_2link(x, y, L1, L2, prefer=prefer)
+        except ValueError as e:
+            print(f"[IK] {e}")
+            return
+        
+        self.end_labels[0].setText(f"Joint 1 end: {th1_deg:.1f}°")
+        self.end_labels[1].setText(f"Joint 2 end: {th2_deg:.1f}°")
+
+        # Preview the solved pose
+        self._draw_pose([th1_deg, th2_deg])
 
 def main():
     app = QApplication(sys.argv)
