@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "numpy",
-    "matplotlib"
+    "matplotlib",
+    "PyQt6"
 ]
 
 [tool.setuptools]
